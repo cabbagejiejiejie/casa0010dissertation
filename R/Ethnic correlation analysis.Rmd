@@ -1,0 +1,69 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-08-13"
+---
+
+```{r}
+library(tidyverse)  
+library(sf)  
+library(corrplot)
+library(ggplot2)
+```
+
+```{r}
+# loading csv file
+data <- read.csv("data/ethnic_correlation_0813.csv")
+```
+
+```{r}
+# Selection of ethnic demographic data columns
+demographic_data <- data %>% select(-LSOA_code)  # 移除Lsoa代码列
+```
+
+```{r}
+# Calculate the correlation matrix
+correlation_matrix <- cor(demographic_data)
+```
+
+```{r}
+# Converting correlation matrices to long format dataframes
+correlation_data <- as.data.frame(as.table(correlation_matrix))
+```
+
+```{r}
+# Plotting the correlation matrix
+corrplot(correlation_matrix, method = "color", 
+         addCoef.col = "black",   # 显示系数值
+         tl.col = "black",        # 标签颜色
+         tl.srt = 45,             # 标签旋转角度
+         diag = FALSE)            # 不显示对角线
+```
+
+```{r}
+ggplot(correlation_data, aes(Var1, Var2, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # x-axis label rotation
+    aspect.ratio = 1   # Ensure that the axis ratio is 1:1
+  ) +
+  coord_fixed() +    # Ensure that the axis ratio is 1:1
+  labs(x = "Ethnicity", y = "Ethnicity", fill = "Correlation")
+```
+
+```{r}
+# Calculate the distance matrix
+dist_matrix <- dist(1 - correlation_matrix)  # Calculate the distance matrix (correlation to distance)
+
+# hierarchical clustering
+hc <- hclust(dist_matrix, method = "ward.D2")
+
+# Tree diagram
+plot(hc)
+
+# Divided into 4 clusters
+clusters <- cutree(hc, k = 4)
+```
+

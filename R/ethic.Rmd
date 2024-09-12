@@ -1,0 +1,430 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-08-01"
+---
+
+```{r}
+library(sf)
+library(readr)
+library(dplyr)
+library(spdep)
+library(stats)
+library(purrr)
+library(ggplot2)
+```
+
+```{r}
+# Loading London Geojson file
+london_lsoa <- st_read("data/london_lsoa.geojson")
+```
+
+```{r}
+# Loading csv file
+csv_data <- read_csv("data/ethnic_4grouped_0801.csv")
+```
+
+```{r}
+# Merging sf object and csv data
+merged_data_lsoa <- left_join(london_lsoa, csv_data, by = c("LSOA21CD" = "LSOA_code"))
+```
+
+```{r}
+# Calculation of weighted population density
+
+# Extract geometric centre point
+centroids <- st_centroid(merged_data_lsoa)
+
+# Extract the coordinates of the centre point
+coords <- st_coordinates(centroids)
+
+# Define the Gaussian kernel function
+gaussian_kernel <- function(d, bw) {
+  exp(-0.5 * (d / bw)^2)
+}
+
+# Setting the bandwidth
+bandwidth <- 700
+
+# Calculate the distance matrix
+dist_matrix <- as.matrix(dist(coords))
+
+# Compute the Gaussian weight matrix
+weight_matrix <- gaussian_kernel(dist_matrix, bandwidth)
+
+# Get Population column
+population_all <- merged_data_lsoa$all
+population_G1 <- merged_data_lsoa$G1
+population_G2 <- merged_data_lsoa$G2
+population_G3 <- merged_data_lsoa$G3
+population_G4 <- merged_data_lsoa$G4
+
+# Calculation of weighted population density
+weighted_density_all <- apply(weight_matrix, 1, function(w) sum(w * population_all) / sum(w))
+weighted_density_G1 <- apply(weight_matrix, 1, function(w) sum(w * population_G1) / sum(w))
+weighted_density_G2 <- apply(weight_matrix, 1, function(w) sum(w * population_G2) / sum(w))
+weighted_density_G3 <- apply(weight_matrix, 1, function(w) sum(w * population_G3) / sum(w))
+weighted_density_G4 <- apply(weight_matrix, 1, function(w) sum(w * population_G4) / sum(w))
+
+# Add weighted population density to the data frame
+merged_data_lsoa$weighted_density_all <- weighted_density_all
+merged_data_lsoa$weighted_density_G1 <- weighted_density_G1
+merged_data_lsoa$weighted_density_G2 <- weighted_density_G2
+merged_data_lsoa$weighted_density_G3 <- weighted_density_G3
+merged_data_lsoa$weighted_density_G4 <- weighted_density_G4
+```
+
+```{r}
+# Calculate the local dissimilarity index
+
+# Calculate the proportion of different groups of people in the city
+total_all <- sum(merged_data_lsoa$all, na.rm = TRUE)
+total_G1 <- sum(merged_data_lsoa$G1, na.rm = TRUE)
+total_G2 <- sum(merged_data_lsoa$G2, na.rm = TRUE)
+total_G3 <- sum(merged_data_lsoa$G3, na.rm = TRUE)
+total_G4 <- sum(merged_data_lsoa$G4, na.rm = TRUE)
+
+tau_G1 <- total_G1 / total_all
+tau_G2 <- total_G2 / total_all
+tau_G3 <- total_G3 / total_all
+tau_G4 <- total_G4 / total_all
+
+# Calculate the regularisation factor I
+I <- (tau_G1 * (1 - tau_G1) + 
+      tau_G2 * (1 - tau_G2) + 
+      tau_G3 * (1 - tau_G3) + 
+      tau_G4 * (1 - tau_G4))
+
+# Functions to compute local dissimilarity indices
+calculate_local_d <- function(local_population, weighted_density_all, 
+                              weighted_density_G1, weighted_density_G2, 
+                              weighted_density_G3, weighted_density_G4) {
+  tau_j_G1 <- weighted_density_G1 / weighted_density_all
+  tau_j_G2 <- weighted_density_G2 / weighted_density_all
+  tau_j_G3 <- weighted_density_G3 / weighted_density_all
+  tau_j_G4 <- weighted_density_G4 / weighted_density_all
+  
+  local_d <- (local_population / (2 * total_all * I)) * (
+    abs(tau_j_G1 - tau_G1) + 
+    abs(tau_j_G2 - tau_G2) + 
+    abs(tau_j_G3 - tau_G3) + 
+    abs(tau_j_G4 - tau_G4)
+  )
+  
+  return(local_d)
+}
+
+# Calculate the local_d_index of each row using pmap
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(local_d_index = pmap_dbl(
+    list(all, weighted_density_all, weighted_density_G1, weighted_density_G2,
+         weighted_density_G3, weighted_density_G4),
+    calculate_local_d
+  ))
+```
+
+```{r}
+global_d_index <- sum(merged_data_lsoa$local_d_index)
+```
+
+```{r}
+# Loading London borough outline
+london_borough <- st_read("data/borough/London_Borough_Excluding_MHW.shp")
+```
+
+```{r}
+# Drawing
+ggplot(merged_data_lsoa) +
+  geom_sf(aes(fill = local_d_index), color = NA) +  # Remove the borderline
+  scale_fill_gradient(low = "white", high = "red", name = "Local D Index") +  # Custom colour gradients
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm")
+  ) +
+  labs(
+    title = "Local D Index Map",
+    subtitle = "Based on Calculated Local D Index Values"
+  )
+```
+```{r}
+ggplot() +
+  # Mapping merged_data_lsoa
+  geom_sf(data = merged_data_lsoa, aes(fill = local_d_index), color = NA) +
+  scale_fill_gradient(low = "white", high = "red", name = "Local D Index") +
+  
+  # Stacking the boundaries of london_borough
+  geom_sf(data = london_borough, fill = NA, color = "black", size = 0.5) +
+  
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm")
+  ) +
+  labs(
+    title = "Local D Index Map",
+    subtitle = "Based on Calculated Local D Index Values"
+  )
+```
+
+```{r}
+# Calculation of the local isolation index
+total_G1 <- sum(merged_data_lsoa$G1, na.rm = TRUE)
+total_G2 <- sum(merged_data_lsoa$G2, na.rm = TRUE)
+total_G3 <- sum(merged_data_lsoa$G3, na.rm = TRUE)
+total_G4 <- sum(merged_data_lsoa$G4, na.rm = TRUE)
+
+# Calculate local_q_G1 using the vectorisation method
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_q_G1 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G1 / total_G1) * (weighted_density_G1 / weighted_density_all)
+    )
+  )
+
+# Calculate local_q_G2 using the vectorisation method
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_q_G2 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G2 / total_G2) * (weighted_density_G2 / weighted_density_all)
+    )
+  )
+
+# Calculate local_q_G3 using the vectorisation method
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_q_G3 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G3 / total_G3) * (weighted_density_G3 / weighted_density_all)
+    )
+  )
+
+# Calculate local_q_G1 using the vectorisation method
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_q_G4 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G4 / total_G4) * (weighted_density_G4 / weighted_density_all)
+    )
+  )
+```
+
+```{r}
+# drawings
+ggplot(merged_data_lsoa) +
+  geom_sf(aes(fill = local_q_G1), color = NA) +  # Remove the borderline
+  scale_fill_gradient(low = "white", high = "red", name = "Local D Index") +  # Custom colour gradients
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm")
+  ) +
+  labs(
+    title = "Local D Index Map",
+    subtitle = "Based on Calculated Local D Index Values"
+  )
+```
+
+```{r}
+# drawings
+ggplot(merged_data_lsoa) +
+  geom_sf(aes(fill = local_q_G2), color = NA) +  # Remove the borderline
+  scale_fill_gradient(low = "white", high = "red", name = "Local D Index") +  # Custom colour gradients
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm")
+  ) +
+  labs(
+    title = "Local D Index Map",
+    subtitle = "Based on Calculated Local D Index Values"
+  )
+```
+
+```{r}
+# drawings
+ggplot(merged_data_lsoa) +
+  geom_sf(aes(fill = local_q_G3), color = NA) +  # Remove the borderline
+  # Stacking the boundaries of london_borough
+  geom_sf(data = london_borough, fill = NA, color = "black", size = 0.5) +
+  scale_fill_gradient(low = "white", high = "red", name = "Local D Index") +  # Custom colour gradients
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm")
+  ) +
+  labs(
+    title = "Local D Index Map",
+    subtitle = "Based on Calculated Local D Index Values"
+  )
+```
+
+```{r}
+# drawings
+ggplot(merged_data_lsoa) +
+  geom_sf(aes(fill = local_q_G4), color = NA) +  # Remove the borderline
+  scale_fill_gradient(low = "white", high = "red", name = "Local D Index") +  # Custom colour gradients
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm")
+  ) +
+  labs(
+    title = "Local D Index Map",
+    subtitle = "Based on Calculated Local D Index Values"
+  )
+```
+
+```{r}
+# Calculation of the local exposure index
+# G1
+total_G1 <- sum(merged_data_lsoa$G1, na.rm = TRUE)
+
+# Calculate local_p_G1_G2 using the vectorisation method
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G1_G2 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G1 / total_G1) * (weighted_density_G2 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G1_G3 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G1_G3 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G1 / total_G1) * (weighted_density_G3 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G1_G4 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G1_G4 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G1 / total_G1) * (weighted_density_G4  / weighted_density_all)
+    )
+  )
+```
+
+```{r}
+# G2
+total_G2 <- sum(merged_data_lsoa$G2, na.rm = TRUE)
+
+# Calculate local_p_G2_G1 using vectorised methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G2_G1 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G2 / total_G2) * (weighted_density_G1 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G2_G3 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G2_G3 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G2 / total_G2) * (weighted_density_G3 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G2_G4 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G2_G4 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G2 / total_G2) * (weighted_density_G4  / weighted_density_all)
+    )
+  )
+```
+
+```{r}
+# G3
+total_G3 <- sum(merged_data_lsoa$G3, na.rm = TRUE)
+
+# Calculate local_p_G3_G1 using the vectorisation method
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G3_G1 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G3 / total_G3) * (weighted_density_G1 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G3_G2 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G3_G2 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G3 / total_G3) * (weighted_density_G2 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G3_G4 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G3_G4 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G3 / total_G3) * (weighted_density_G4  / weighted_density_all)
+    )
+  )
+```
+
+```{r}
+# G4
+total_G4 <- sum(merged_data_lsoa$G4, na.rm = TRUE)
+
+# Calculation of local_p_G4_G1 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G4_G1 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G4 / total_G4) * (weighted_density_G1 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G4_G2 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G4_G2 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G4 / total_G4) * (weighted_density_G2 / weighted_density_all)
+    )
+  )
+
+# Calculation of local_p_G4_G3 using vectorisation methods
+merged_data_lsoa <- merged_data_lsoa %>%
+  mutate(
+    local_p_G4_G3 = if_else(
+      weighted_density_all == 0, 
+      NA_real_,  # If weighted_density_all is 0, return NA
+      (G4 / total_G4) * (weighted_density_G3  / weighted_density_all)
+    )
+  )
+```
+
+```{r}
+df <- st_drop_geometry(merged_data_lsoa)
+
+write_csv(df, "local_d.csv")
+```
+

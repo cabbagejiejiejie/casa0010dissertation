@@ -1,0 +1,40 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-08-01"
+---
+
+```{r}
+library(sf)
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+# loading boundaries files
+shapefile_data_lsoa <- st_read("data/lsoa_boundaries/LSOA_2021_EW_BFE_V10.shp")
+```
+
+```{r}
+# loading lsoa_code file
+lsoa_code <- read_csv("data/lsoa_code.csv")
+```
+
+```{r}
+# Consolidation of data
+filtered_shapefile_data <- semi_join(shapefile_data_lsoa, lsoa_code, by = c("LSOA21CD" = "LSOA_code"))
+```
+
+```{r}
+# Plotting sf objects with ggplot2
+ggplot(data = filtered_shapefile_data) +
+  geom_sf() +
+  ggtitle("Filtered Shapefile Data")
+```
+
+```{r}
+# Export as GeoJSON file
+st_write(filtered_shapefile_data, "file.geojson", driver = "GeoJSON")
+```
+

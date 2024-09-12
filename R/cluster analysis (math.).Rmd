@@ -1,0 +1,149 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-08-04"
+---
+
+```{r}
+library(sf)
+library(readr)
+library(dplyr)
+library(spdep)
+library(stats)
+library(purrr)
+library(ggplot2)
+```
+
+```{r}
+# loading csv file
+csv_data_ethic <- read_csv("data/clusters/local_d_ethic.csv")
+
+csv_data_qualification <- read_csv("data/clusters/local_d_qualification.csv")
+
+csv_data_nssec <- read_csv("data/clusters/local_d_nssec.csv")
+
+csv_data_age <- read_csv("data/clusters/local_d_age.csv")
+```
+
+```{r}
+# loading GeoJSON file
+london_lsoa <- st_read("data/london_lsoa.geojson")
+```
+
+```{r}
+# Merge according to column LSOA21CD
+merged_df <- csv_data_ethic %>%
+  full_join(csv_data_qualification, by = "LSOA21CD") %>%
+  full_join(csv_data_nssec, by = "LSOA21CD") %>%
+  full_join(csv_data_age, by = "LSOA21CD")
+```
+
+```{r}
+# Merging sf objects and CSV data
+merged_data_lsoa <- left_join(london_lsoa, merged_df, by = c("LSOA21CD" = "LSOA21CD"))
+```
+
+```{r}
+library(sf)
+library(cluster)
+library(ggplot2)
+```
+
+```{r}
+# Extracting value matrices from sf objects
+data_for_clustering <- data.frame(
+  index_ethnic = merged_data_lsoa$local_d_index_ethic,
+  index_age = merged_data_lsoa$local_d_index_age,
+  index_education = merged_data_lsoa$local_d_index_qualification,
+  index_class = merged_data_lsoa$local_d_index_nssec
+)
+```
+
+```{r}
+# Setting the range of the number of clusters
+max_clusters <- 10
+wcss <- numeric(max_clusters)
+
+# Calculate the WCSS at each number of clusters
+for (i in 1:max_clusters) {
+  kmeans_result <- kmeans(data_for_clustering, centers = i)
+  wcss[i] <- kmeans_result$tot.withinss
+}
+
+# Drawing the elbow
+plot(1:max_clusters, wcss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters",
+     ylab = "Total Within-Cluster Sum of Square (WCSS)",
+     main = "Elbow Method for Optimal Number of Clusters")
+
+```
+
+```{r}
+# Perform K-means clustering
+set.seed(123)  # Setting random seeds for reproducibility
+num_clusters <- 4  # Setting the number of clusters
+kmeans_result <- kmeans(data_for_clustering, centers = num_clusters)
+```
+
+```{r}
+# Adding clustering results to sf objects
+merged_data_lsoa$cluster <- factor(kmeans_result$cluster)
+```
+
+```{r}
+# Mapping the clustering results
+ggplot(data = merged_data_lsoa) +
+  geom_sf(aes(fill = cluster), color = NA) +
+  scale_fill_viridis_d(option = "D") +
+  theme_minimal() +
+  labs(fill = "Cluster", title = "Spatial Clustering of LSOA in London based on Heterogeneity Indices")
+```
+
+```{r}
+# Compute descriptive statistics for each cluster
+stats_by_cluster <- merged_data_lsoa %>%
+  group_by(cluster) %>%
+  summarise(across(c(local_d_index_ethic, local_d_index_age, local_d_index_qualification, local_d_index_nssec), list(mean = mean, sd = sd)))
+```
+
+```{r}
+# Output statistics
+print(stats_by_cluster)
+```
+
+```{r}
+# Visualising the exponential distribution of each cluster
+ggplot(merged_data_lsoa, aes(x = cluster, y = local_d_index_ethic, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Ethic Heterogeneity Index by Cluster",
+       x = "Cluster",
+       y = "Ethic Heterogeneity Index")
+```
+
+```{r}
+# Visualising the exponential distribution of each cluster
+ggplot(merged_data_lsoa, aes(x = cluster, y = local_d_index_qualification, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Qualification Heterogeneity Index by Cluster",
+       x = "Cluster",
+       y = "Qualification Heterogeneity Index")
+```
+
+```{r}
+# Visualising the exponential distribution of each cluster
+ggplot(merged_data_lsoa, aes(x = cluster, y = local_d_index_nssec, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Distribution of NS-SEC Heterogeneity Index by Cluster",
+       x = "Cluster",
+       y = "NS-SEC Heterogeneity Index")
+```
+
+```{r}
+# Visualising the exponential distribution of each cluster
+ggplot(merged_data_lsoa, aes(x = cluster, y = local_d_index_age, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Age Heterogeneity Index by Cluster",
+       x = "Cluster",
+       y = "Age Heterogeneity Index")
+```
+
